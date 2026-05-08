@@ -15,6 +15,9 @@ LEXICON = {"structure":["article i", "article ii", "section 1.1", "section 2.3",
            "boilerplate":["termination", "force majeure", "entire agreement", "amendment", "severability", "waiver", "assignment"],
            "legal":["indemnify", "liability", "damages", "governing law", "jurisdiction", "applicable law", "compliance with laws"],
            "strong":["non-disclosure agreement", "nda", "confidential information", "proprietary information", "disclosing party", "receiving party", "mutual agreement", "unilateral agreement", "terms and conditions of this agreement"]}
+
+
+
 analyzer = AnalyzerEngine()
 
 #Check - https://karthikeyanrathinam.medium.com/extracting-text-and-images-from-pdfs-using-python-a-step-by-step-guide-b9c8506fd613 for explanation

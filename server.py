@@ -8,7 +8,6 @@ app = FastAPI()
 
 analyzer = AnalyzerEngine()
 
-# -----------------------
 # TEXT SCAN
 # -----------------------
 def detect_pii(text):
@@ -62,6 +61,7 @@ async def scan_file(file: UploadFile = File(...)):
         temp_path = tmp.name
 
     try:
+        #!!!!!!!!!!!!!!!!!!!!!!!!! Change DPI !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         # OCR + extraction
         pages = extract_text_hybrid(temp_path, dpi=120, use_parallel=False)
 
