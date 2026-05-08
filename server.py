@@ -23,7 +23,7 @@ def make_decision(results):
     for r in results:
         print(r.entity_type, r.score)
 
-        if r.score > 0.85:
+        if r.score > 0.7:
             decision = "block"
             break
 
@@ -63,7 +63,7 @@ async def scan_file(file: UploadFile = File(...)):
     try:
         #!!!!!!!!!!!!!!!!!!!!!!!!! Change DPI !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         # OCR + extraction
-        pages = extract_text_hybrid(temp_path, dpi=120, use_parallel=False)
+        pages = extract_text_hybrid(temp_path, dpi=200, use_parallel=False)
 
         text = "\n".join(pages)
 

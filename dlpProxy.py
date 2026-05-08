@@ -13,44 +13,66 @@ def extract_prompt(content):
 
     content = content.strip()
 
-    if not (content.startswith("{") or content.startswith("[")):
-        return ""
-
     try:
         data = json.loads(content)
     except Exception:
         return ""
 
-    # Handle list payloads
-    if isinstance(data, list):
-        return ""
+    # 1. Claude.ai direct prompt format (from claude.txt)
+    if "prompt" in data and isinstance(data["prompt"], str):
+        # Check if it's the simple format or needs split (Legacy)
+        prompt = data["prompt"]
+        if "\n\nHuman:" in prompt:
+            parts = prompt.split("\n\nHuman:")
+            last_part = parts[-1].split("\n\nAssistant:")[0]
+            return last_part.strip()
+        return prompt
 
+    # 2. ChatGPT/Generic messages format
     messages = data.get("messages", [])
-    text_chunks = []
+    if isinstance(messages, list) and len(messages) > 0:
+        text_chunks = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
 
-    for m in messages:
+            role = m.get("role") or m.get("author", {}).get("role")
+            if role != "user":
+                continue
 
-        if not isinstance(m, dict):
-            continue
+            content_obj = m.get("content")
+            if isinstance(content_obj, dict):
+                parts = content_obj.get("parts", [])
+                text_chunks.extend(
+                    [p for p in parts if isinstance(p, str)]
+                )
+            elif isinstance(content_obj, str):
+                text_chunks.append(content_obj)
+        
+        if text_chunks:
+            return " ".join(text_chunks).strip()
 
-        role = m.get("role") or m.get("author", {}).get("role")
+    # 3. Claude Web UI format (chat_messages)
+    if "text" in data and isinstance(data["text"], str):
+        return data["text"]
 
-        if role != "user":
-            continue
+    # 4. Anthropic API format (Messages API)
+    anthropic_messages = data.get("messages", [])
+    if isinstance(anthropic_messages, list):
+        text_chunks = []
+        for m in anthropic_messages:
+            if m.get("role") == "user":
+                content = m.get("content")
+                if isinstance(content, str):
+                    text_chunks.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text_chunks.append(part.get("text", ""))
+        if text_chunks:
+            return " ".join(text_chunks).strip()
 
-        content_obj = m.get("content")
-
-        if isinstance(content_obj, dict):
-            parts = content_obj.get("parts", [])
-
-            text_chunks.extend(
-                [p for p in parts if isinstance(p, str)]
-            )
-
-        elif isinstance(content_obj, str):
-            text_chunks.append(content_obj)
-
-    return " ".join(text_chunks).strip()
+    return ""
 
 
 # SCAN TEXT - CHECK server.py 
@@ -78,8 +100,15 @@ def handle_raw_file_upload(flow):
     print("RAW FILE UPLOAD:", len(content), "bytes", content_type)
 
     try:
+        # Determine filename if possible, else default
+        filename = "upload.pdf" 
+        if "pdf" in content_type.lower():
+            filename = "upload.pdf"
+        elif "image" in content_type.lower():
+            filename = "upload.png"
+
         files = {
-            "file": ("upload.pdf", content)
+            "file": (filename, content)
         }
 
         response = requests.post(
@@ -88,12 +117,8 @@ def handle_raw_file_upload(flow):
             timeout=30
         )
 
-        print("STATUS:", response.status_code)
-        print("RAW RESPONSE:", response.text)
         data = response.json()
-        print("PARSED RESPONSE:", data)
         decision = data.get("decision")
-
         print("FILE Decision:", decision)
 
         if decision == "block":
@@ -105,6 +130,8 @@ def handle_raw_file_upload(flow):
 
     except Exception as e:
         print("File scan error:", e)
+
+
 # HANDLE MULTIPART (fallback)
 def handle_multipart_upload(flow):
     multipart = flow.request.multipart_form
@@ -113,29 +140,47 @@ def handle_multipart_upload(flow):
         return
 
     for name, value in multipart.items():
-        if hasattr(value, "filename"):
+        if hasattr(value, "filename") and value.filename:
             filename = value.filename
             content = value.content
 
             print("MULTIPART FILE:", filename, len(content))
 
-            try:
-                text = content.decode("utf-8", errors="ignore")
-            except:
-                text = ""
+            # If it's a binary file (PDF, Image), use scan-file
+            if filename.lower().endswith(('.pdf', '.png', '.jpg', '.jpeg', '.tiff')):
+                try:
+                    files = {"file": (filename, content)}
+                    response = requests.post(
+                        "http://localhost:8000/scan-file",
+                        files=files,
+                        timeout=30
+                    )
+                    decision = response.json().get("decision")
+                    if decision == "block":
+                        flow.response = http.Response.make(
+                            403,
+                            b"Blocked: Sensitive data in file",
+                            {"Content-Type": "text/plain"}
+                        )
+                        return
+                except Exception as e:
+                    print("Multipart file scan error:", e)
+            else:
+                # Handle text-based files
+                try:
+                    text = content.decode("utf-8", errors="ignore")
+                except:
+                    text = ""
 
-            if not text:
-                continue
-
-            decision = scan_text(text)
-
-            if decision == "block":
-                flow.response = http.Response.make(
-                    403,
-                    b"Blocked: Sensitive data in file",
-                    {"Content-Type": "text/plain"}
-                )
-                return
+                if text:
+                    decision = scan_text(text)
+                    if decision == "block":
+                        flow.response = http.Response.make(
+                            403,
+                            b"Blocked: Sensitive data in file",
+                            {"Content-Type": "text/plain"}
+                        )
+                        return
 
 
 # MAIN ENTRY
@@ -149,18 +194,21 @@ def request(flow: http.HTTPFlow):
         # -----------------------
         # 1. FILE UPLOAD (RAW PUT to blob storage) - 
         # CHATGPT uses oaiusercontent.com for PUT
-        # 
+        # CLAUDE uses claudeusercontent.com
         # -----------------------
-        if (
-            method in ["PUT", "POST"] and
-            (
-                "oaiusercontent.com" in host or
-                "anthropic.com" in host or
-                "claudeusercontent.com" in host
-            )
-        ):
+        is_blob_storage = any(h in host for h in ["oaiusercontent.com", "claudeusercontent.com"])
+        is_potential_file = method in ["PUT", "POST"] and ("anthropic.com" in host or "claude.ai" in host)
+        
+        # Only treat as raw file if NOT JSON and NOT Multipart
+        if (is_blob_storage or is_potential_file) and "application/json" not in content_type and "multipart/form-data" not in content_type and "text/plain" not in content_type:
             handle_raw_file_upload(flow)
-            return
+            if flow.response: # If blocked
+                return
+            # If not blocked, we might still want to check if it's a text request later, 
+            # but usually raw uploads are separate from API calls.
+            # However, for safety, let's only return if we actually handled it.
+            if is_blob_storage:
+                return
 
         # 2. MULTIPART FILE (fallback)
         if "multipart/form-data" in content_type:
@@ -168,7 +216,7 @@ def request(flow: http.HTTPFlow):
             return
 
         # 3. TEXT REQUESTS in LLM
-        if "/backend-api/conversation" in path or "/backend-api/f/conversation" in path or "/v1/" in path:
+        if "/backend-api/conversation" in path or "/backend-api/f/conversation" in path or "/v1/" in path or "/api/organizations/" in path or "/chat_conversations/" in path:
             flow.request.decode()
             raw = flow.request.text or ""
 
