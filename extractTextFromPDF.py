@@ -44,16 +44,28 @@ def ocr_image(args):
     return page_num, text.strip()
 
 # Main extraction pipeline
-def extract_text_hybrid(input_pdf_path, dpi=200, lang='eng', use_parallel=True):
+def extract_text_hybrid(input_path, dpi=200, lang='eng', use_parallel=True):
     # Ensure languages exist
     for l in lang.split('+'):
         download_tesseract_lang_data(l)
 
-    input_pdf = fitz.open(input_pdf_path)
-    total_pages = len(input_pdf)
+    # Check if it's an image
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext in ['.png', '.jpg', '.jpeg', '.tiff', '.bmp']:
+        from PIL import Image
+        img = Image.open(input_path)
+        _, text = ocr_image((0, img, lang))
+        return [text]
 
+    # Assume PDF
+    try:
+        input_pdf = fitz.open(input_path)
+    except Exception as e:
+        print(f"Error opening file {input_path}: {e}")
+        return []
+
+    total_pages = len(input_pdf)
     results = [""] * total_pages
-    ocr_tasks = []
     pages_to_ocr = []
 
     # Try native extraction
@@ -66,30 +78,32 @@ def extract_text_hybrid(input_pdf_path, dpi=200, lang='eng', use_parallel=True):
         else:
             pages_to_ocr.append(page_num)
 
-    # OCR only required pages for scanned pdf or img
+    # OCR only required pages for scanned pdf
     if pages_to_ocr:
         print(f"OCR needed for {len(pages_to_ocr)} / {total_pages} pages")
 
-        images = convert_from_path(
-            input_pdf_path,
-            dpi=dpi,
-            first_page=min(pages_to_ocr) + 1,
-            last_page=max(pages_to_ocr) + 1
-        )
+        try:
+            images = convert_from_path(
+                input_path,
+                dpi=dpi,
+                first_page=min(pages_to_ocr) + 1,
+                last_page=max(pages_to_ocr) + 1
+            )
 
-        # Map images correctly
-        page_image_map = dict(zip(pages_to_ocr, images))
+            # Map images correctly
+            page_image_map = dict(zip(pages_to_ocr, images))
+            ocr_tasks = [(p, page_image_map[p], lang) for p in pages_to_ocr]
 
-        ocr_tasks = [(p, page_image_map[p], lang) for p in pages_to_ocr]
+            if use_parallel:
+                with Pool(cpu_count()) as pool:
+                    ocr_results = pool.map(ocr_image, ocr_tasks)
+            else:
+                ocr_results = [ocr_image(task) for task in ocr_tasks]
 
-        if use_parallel:
-            with Pool(cpu_count()) as pool:
-                ocr_results = pool.map(ocr_image, ocr_tasks)
-        else:
-            ocr_results = [ocr_image(task) for task in ocr_tasks]
-
-        for page_num, text in ocr_results:
-            results[page_num] = text
+            for page_num, text in ocr_results:
+                results[page_num] = text
+        except Exception as e:
+            print(f"OCR error: {e}")
 
     input_pdf.close()
     return results
