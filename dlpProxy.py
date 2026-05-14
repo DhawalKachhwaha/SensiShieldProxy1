@@ -2,186 +2,287 @@
 from mitmproxy import http
 import requests
 import json
+import datetime
+import hashlib
+import re
+import base64
 
+BASE64_PDF_PATTERN = re.compile(rb'JVBERi0xL[A-Za-z0-9+/=]+')
+
+#Added logging because MITMProxy isnt fun
+LOG_FILE = "dlpProxy.log"
+
+def log(message):
+
+    timestamp = datetime.datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    line = f"[{timestamp}] {message}"
+
+    with open(LOG_FILE, "a") as f:
+        f.write(line + "\n")
+
+#Tryna make the code cleaner - I think this should be more manageable.
+#Not using because provider handling is too complex atp
+#Split API to /scan-file/openai and /scan-file/claude, /scan is used by scan_text()
 SCAN_API = "http://localhost:8000/scan" #Change to server IP - currently runs in localhost
 
+OPENAI_FILE_API = "http://localhost:8000/scan-file/openai"
 
-# LLM PROMPT REQUEST TEXT EXTRACTION
-def extract_prompt(content):
+CLAUDE_FILE_API = "http://localhost:8000/scan-file/claude"
+
+#Functions Split for Provider Detection:
+def is_openai_request(host):
+    return (
+        "chatgpt.com" in host
+        or "openai.com" in host
+        or "oaiusercontent.com" in host
+    )
+
+
+def is_claude_request(host):
+    return (
+        "claude.ai" in host
+        or "anthropic.com" in host
+        or "claudeusercontent.com" in host
+    )
+
+def is_perplexity_request(host):
+    return (
+        "perplexity.ai" in host
+        or "pplx" in host
+        or "amazonaws.com" in host
+    )
+
+
+#Block Response
+def block_response(flow, reason):
+
+    flow.response = http.Response.make(
+        403,
+        reason.encode(),
+        {"Content-Type": "text/plain"}
+    )
+
+
+
+#Check content and block logic for OpenAI uploads
+def handle_openai_upload(flow):
+    content = flow.request.raw_content
+    if flow.response:
+        return
     if not content:
-        return ""
+        return
+    if not content.startswith(b"%PDF"):
+        log("Skipping non-PDF OpenAI upload")
+        return
+    log(f"OPENAI PDF: {len(content)}")
+    files = {
+        "file": ("upload.pdf", content)
+    }
+    response = requests.post(
+        OPENAI_FILE_API,
+        files=files,
+        timeout=90
+    )
+    decision = response.json().get("decision")
+    log(f"OPENAI FILE DECISION: {decision}")
+    if decision == "block":
+        block_response(
+            flow,
+            "Blocked: Sensitive OpenAI upload"
+        )
 
-    content = content.strip()
 
+#Same for claude
+import io
+import os
+from multipart import MultipartParser, parse_options_header
+
+
+def handle_perplexity_upload(flow):
+    handle_claude_upload(flow)
+
+def handle_claude_upload(flow):
     try:
-        data = json.loads(content)
-    except Exception:
-        return ""
-
-    # 1. Claude.ai direct prompt format (from claude.txt)
-    if "prompt" in data and isinstance(data["prompt"], str):
-        # Check if it's the simple format or needs split (Legacy)
-        prompt = data["prompt"]
-        if "\n\nHuman:" in prompt:
-            parts = prompt.split("\n\nHuman:")
-            last_part = parts[-1].split("\n\nAssistant:")[0]
-            return last_part.strip()
-        return prompt
-
-    # 2. ChatGPT/Generic messages format
-    messages = data.get("messages", [])
-    if isinstance(messages, list) and len(messages) > 0:
-        text_chunks = []
-        for m in messages:
-            if not isinstance(m, dict):
+        content_type_header = flow.request.headers.get(
+            "Content-Type",
+            ""
+        )
+        content_type, options = parse_options_header(
+            content_type_header
+        )
+        if content_type != "multipart/form-data":
+            log("NOT MULTIPART")
+            return
+        boundary = (
+            options.get(b"boundary")
+            or options.get("boundary")
+        )
+        if not boundary:
+            log("NO BOUNDARY FOUND")
+            return
+        raw_body = flow.request.get_content()
+        stream = io.BytesIO(raw_body)
+        parser = MultipartParser(stream, boundary)
+        for part in parser:
+            # Skip non-file fields
+            if not part.filename:
                 continue
+            try:
+                # SAFEST extraction path
+                if hasattr(part, "raw"):
+                    file_bytes = part.raw
+                elif hasattr(part, "file"):
+                    part.file.seek(0)
+                    file_bytes = part.file.read()
+                else:
+                    log("CANNOT READ FILE BYTES")
+                    continue
+                if not file_bytes:
 
-            role = m.get("role") or m.get("author", {}).get("role")
-            if role != "user":
-                continue
-
-            content_obj = m.get("content")
-            if isinstance(content_obj, dict):
-                parts = content_obj.get("parts", [])
-                text_chunks.extend(
-                    [p for p in parts if isinstance(p, str)]
+                    log("EMPTY FILE")
+                    continue
+                filename = os.path.basename(
+                    part.filename
                 )
-            elif isinstance(content_obj, str):
-                text_chunks.append(content_obj)
-        
-        if text_chunks:
-            return " ".join(text_chunks).strip()
+                log(
+                    f"CLAUDE FILE DETECTED: "
+                    f"{filename} "
+                    f"{len(file_bytes)} bytes"
+                )
+                # Optional MIME detection
+                is_pdf = file_bytes.startswith(b"%PDF")
+                if is_pdf:
+                    log("PDF DETECTED")
+                # Send clean bytes to scanner
+                files = {
+                    "file": (
+                        filename,
+                        file_bytes,
+                        "application/octet-stream"
+                    )
+                }
+                response = requests.post(
+                    CLAUDE_FILE_API,
+                    files=files,
+                    timeout=120
+                )
+                log(
+                    f"SCAN STATUS: "
+                    f"{response.status_code}"
+                )
+                log(
+                    f"SCAN RESPONSE: "
+                    f"{response.text}"
+                )
+                result = response.json()
+                decision = result.get("decision")
+                log(f"DECISION: {decision}")
+                if decision == "block":
+                    flow.response = http.Response.make(
+                        403,
+                        b"Blocked: Sensitive file detected",
+                        {"Content-Type": "text/plain"}
+                    )
+                    return
+            except Exception as file_error:
+                log(
+                    f"FILE PROCESSING ERROR: "
+                    f"{file_error}"
+                )
+        # Cleanup temp handles
+        try:
+            for p in parser.parts():
+                p.close()
+        except Exception:
+            pass
+    except Exception as e:
+        log(f"CLAUDE MULTIPART ERROR: {e}")
 
-    # 3. Claude Web UI format (chat_messages)
-    if "text" in data and isinstance(data["text"], str):
-        return data["text"]
-
-    # 4. Anthropic API format (Messages API)
-    anthropic_messages = data.get("messages", [])
-    if isinstance(anthropic_messages, list):
-        text_chunks = []
-        for m in anthropic_messages:
-            if m.get("role") == "user":
-                content = m.get("content")
-                if isinstance(content, str):
-                    text_chunks.append(content)
-                elif isinstance(content, list):
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            text_chunks.append(part.get("text", ""))
-        if text_chunks:
-            return " ".join(text_chunks).strip()
-
-    return ""
-
-
+#I've lost the plot, idk if this is being used. - It is.
 # SCAN TEXT - CHECK server.py 
 def scan_text(text):
     try:
         response = requests.post(
             SCAN_API,
             json={"text": text},
-            timeout=5
+            timeout=20
         )
         return response.json().get("decision")
     except Exception as e:
-        print("Scan error:", e)
+        log(f"Scan error: {e}")
         return "allow"
 
+#EXTRACTION FROM JSON - claude
+def extract_claude_prompt(data):
 
-# HANDLE RAW FILE UPLOAD 
-def handle_raw_file_upload(flow):
-    content = flow.request.raw_content
-    content_type = flow.request.headers.get("content-type", "")
+    if (
+        "prompt" in data
+        and isinstance(data["prompt"], str)
+    ):
+        return data["prompt"]
 
-    if not content:
-        return
+    if (
+        "text" in data
+        and isinstance(data["text"], str)
+    ):
+        return data["text"]
 
-    print("RAW FILE UPLOAD:", len(content), "bytes", content_type)
+    return ""
+    
+#EXTRACTION FROM JSON -OPNAI
+def extract_openai_prompt(data):
 
-    try:
-        # Determine filename if possible, else default
-        filename = "upload.pdf" 
-        if "pdf" in content_type.lower():
-            filename = "upload.pdf"
-        elif "image" in content_type.lower():
-            filename = "upload.png"
-
-        files = {
-            "file": (filename, content)
-        }
-
-        response = requests.post(
-            "http://localhost:8000/scan-file",
-            files=files,
-            timeout=30
+    if not isinstance(data, dict):
+        return ""
+    messages = data.get("messages", [])
+    if not isinstance(messages, list):
+        return ""
+    text_chunks = []
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        # Detect role
+        role = (
+            m.get("role")
+            or m.get("author", {}).get("role")
         )
+        if role != "user":
+            continue
+        content_obj = m.get("content")
+        if isinstance(content_obj, dict):
+            parts = content_obj.get("parts", [])
+            if isinstance(parts, list):
+                for p in parts:
+                    if isinstance(p, str):
+                        text_chunks.append(p)
+                    elif isinstance(p, dict):
+                        text = p.get("text")
+                        if isinstance(text, str):
+                            text_chunks.append(text)
+        elif isinstance(content_obj, str):
+            text_chunks.append(content_obj)
+        elif isinstance(content_obj, list):
+            for item in content_obj:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        text_chunks.append(text)
+    return "\n".join(text_chunks).strip()
 
-        data = response.json()
-        decision = data.get("decision")
-        print("FILE Decision:", decision)
+def extract_perplexity_prompt(data):
 
-        if decision == "block":
-            flow.response = http.Response.make(
-                403,
-                b"Blocked: Sensitive data in file",
-                {"Content-Type": "text/plain"}
-            )
+    if (
+        "query_str" in data
+        and isinstance(data["query_str"], str)
+    ):
+        return data["query_str"]
 
-    except Exception as e:
-        print("File scan error:", e)
-
-
-# HANDLE MULTIPART (fallback)
-def handle_multipart_upload(flow):
-    multipart = flow.request.multipart_form
-
-    if not multipart:
-        return
-
-    for name, value in multipart.items():
-        if hasattr(value, "filename") and value.filename:
-            filename = value.filename
-            content = value.content
-
-            print("MULTIPART FILE:", filename, len(content))
-
-            # If it's a binary file (PDF, Image), use scan-file
-            if filename.lower().endswith(('.pdf', '.png', '.jpg', '.jpeg', '.tiff')):
-                try:
-                    files = {"file": (filename, content)}
-                    response = requests.post(
-                        "http://localhost:8000/scan-file",
-                        files=files,
-                        timeout=30
-                    )
-                    decision = response.json().get("decision")
-                    if decision == "block":
-                        flow.response = http.Response.make(
-                            403,
-                            b"Blocked: Sensitive data in file",
-                            {"Content-Type": "text/plain"}
-                        )
-                        return
-                except Exception as e:
-                    print("Multipart file scan error:", e)
-            else:
-                # Handle text-based files
-                try:
-                    text = content.decode("utf-8", errors="ignore")
-                except:
-                    text = ""
-
-                if text:
-                    decision = scan_text(text)
-                    if decision == "block":
-                        flow.response = http.Response.make(
-                            403,
-                            b"Blocked: Sensitive data in file",
-                            {"Content-Type": "text/plain"}
-                        )
-                        return
-
+    return ""
 
 # MAIN ENTRY
 def request(flow: http.HTTPFlow):
@@ -189,53 +290,109 @@ def request(flow: http.HTTPFlow):
         host = flow.request.pretty_host
         path = flow.request.path
         method = flow.request.method
-        content_type = flow.request.headers.get("content-type", "")
-
-        # -----------------------
-        # 1. FILE UPLOAD (RAW PUT to blob storage) - 
-        # CHATGPT uses oaiusercontent.com for PUT
-        # CLAUDE uses claudeusercontent.com
-        # -----------------------
-        is_blob_storage = any(h in host for h in ["oaiusercontent.com", "claudeusercontent.com"])
-        is_potential_file = method in ["PUT", "POST"] and ("anthropic.com" in host or "claude.ai" in host)
-        
-        # Only treat as raw file if NOT JSON and NOT Multipart
-        if (is_blob_storage or is_potential_file) and "application/json" not in content_type and "multipart/form-data" not in content_type and "text/plain" not in content_type:
-            handle_raw_file_upload(flow)
-            if flow.response: # If blocked
+        content_type = flow.request.headers.get("content-type","")
+        # OPENAI
+        if is_openai_request(host):
+            # RAW PDF uploads
+            if ("oaiusercontent.com" in host
+                and method in ["PUT", "POST"]):
+                handle_openai_upload(flow)
                 return
-            # If not blocked, we might still want to check if it's a text request later, 
-            # but usually raw uploads are separate from API calls.
-            # However, for safety, let's only return if we actually handled it.
-            if is_blob_storage:
+            # OpenAI prompt requests
+            if ("/backend-api/f/conversation" in path
+                or "/v1/" in path):
+
+                flow.request.decode()
+                raw = flow.request.text or ""
+                try:
+                    data = json.loads(raw)
+                except:
+                    return
+                content = extract_openai_prompt(data)
+                if not content:
+                    return
+                decision = scan_text(content)
+                log(f"OPENAI TEXT: {decision}")
+                if decision == "block":
+                    block_response(flow,
+                        "Blocked: Sensitive OpenAI text")
+
                 return
+        # CLAUDE
+        elif is_claude_request(host):
+            log(f"CLAUDE PATH: {path}")
+            if "/completion" in path:
+                log(f"CLAUDE TEXT")
 
-        # 2. MULTIPART FILE (fallback)
-        if "multipart/form-data" in content_type:
-            handle_multipart_upload(flow)
-            return
+                flow.request.decode()
 
-        # 3. TEXT REQUESTS in LLM
-        if "/backend-api/conversation" in path or "/backend-api/f/conversation" in path or "/v1/" in path or "/api/organizations/" in path or "/chat_conversations/" in path:
-            flow.request.decode()
-            raw = flow.request.text or ""
+                raw = flow.request.text or ""
 
-            content = extract_prompt(raw)
+                try:
+                    data = json.loads(raw)
+                except:
+                    return
 
-            if not content:
+                content = extract_claude_prompt(data)
+
+                if not content:
+                  return
+
+                decision = scan_text(content)
+
+                log(f"CLAUDE TEXT DECISION: {decision}")
+
+                if decision == "block":
+
+                    block_response(
+                        flow,
+                        "Blocked: Sensitive Claude text"
+                    )
+
                 return
+            elif "/wiggle/upload-file" in path:
+                    log(f"CLAUDE FILE")
+                    handle_claude_upload(flow)
+                    return
+        # PERPLEXITY
+        elif is_perplexity_request(host):
 
-            decision = scan_text(content)
+            log(f"PERPLEXITY PATH: {path}")
 
-            if decision == "block":
-                flow.response = http.Response.make(
-                    403,
-                    b"Blocked: Sensitive data detected",
-                    {"Content-Type": "text/plain"}
-                )
+            # TEXT REQUESTS
+            if (
+                method == "POST"
+                and "application/json" in content_type
+            ):
 
-            print("Text:\n", content[:200])
-            print("Decision\n:", decision)
+                log("PERPLEXITY TEXT")
 
+                flow.request.decode()
+
+                raw = flow.request.text or ""
+
+                try:
+                    data = json.loads(raw)
+                except Exception as e:
+                    log(f"PPLX JSON ERROR: {e}")
+                    return
+
+                content = extract_perplexity_prompt(data)
+
+                if not content:
+                    return
+
+                decision = scan_text(content)
+
+                log(f"PERPLEXITY TEXT DECISION: {decision}")
+
+                if decision == "block":
+
+                    block_response(
+                        flow,
+                        "Blocked: Sensitive Perplexity text"
+                    )
+
+                return
     except Exception as e:
-        print("Error:", e)
+        log(f"Error: {format(e)}")

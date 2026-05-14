@@ -1,0 +1,47 @@
+[2026-05-14 08:16:16] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:16:16] OPENAI TEXT: allow
+[2026-05-14 08:17:35] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:17:35] OPENAI TEXT: allow
+[2026-05-14 08:18:48] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:18:48] OPENAI TEXT: allow
+[2026-05-14 08:20:12] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:20:12] OPENAI TEXT: allow
+[2026-05-14 08:21:10] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:21:10] OPENAI TEXT: allow
+[2026-05-14 08:27:18] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:27:18] OPENAI TEXT: allow
+[2026-05-14 08:29:38] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:29:38] OPENAI TEXT: allow
+[2026-05-14 08:30:46] OPENAI PDF: 17380560
+[2026-05-14 08:30:46] Error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan-file/openai (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:31:15] OPENAI PDF: 17380560
+[2026-05-14 08:31:15] FILE HASH: 19e59845516a51e9a02e2121c7b2881ce9873c8ac7a59002393ba83f0909e56d
+[2026-05-14 08:31:15] CACHE MISS
+[2026-05-14 08:31:15] ====== Server Process Upload ======
+[2026-05-14 08:31:15] FILE SIZE: 17380560
+[2026-05-14 08:31:15] PDF HEADER: b'%PDF-1.4\n%\xe4\xf0\xed\xf8\n4 0 o'
+[2026-05-14 08:31:15] TEMP PATH: /tmp/tmp5rg8mpcf.pdf
+[2026-05-14 08:31:15] FILE EXISTS: True
+[2026-05-14 08:31:15] DISK SIZE: 17380560
+[2026-05-14 08:31:15] PDF PAGE COUNT: 28
+[2026-05-14 08:31:26] RESULT CACHED
+[2026-05-14 08:31:26] OPENAI FILE DECISION: block
+[2026-05-14 08:32:03] OPENAI TEXT: allow
+[2026-05-14 08:34:29] OPENAI TEXT: allow
+[2026-05-14 08:40:03] OPENAI TEXT: allow
+[2026-05-14 08:40:50] OPENAI TEXT: block
+[2026-05-14 08:43:06] OPENAI TEXT: allow
+[2026-05-14 08:57:31] OPENAI TEXT: block
+[2026-05-14 08:57:55] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 08:57:55] OPENAI TEXT: allow
+[2026-05-14 09:01:12] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 09:01:12] OPENAI TEXT: allow
+[2026-05-14 09:01:24] Scan error: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /scan (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [Errno 111] Connection refused"))
+[2026-05-14 09:01:24] OPENAI TEXT: allow
+[2026-05-14 09:01:41] OPENAI TEXT: allow
+[2026-05-14 09:04:02] OPENAI TEXT: allow
+[2026-05-14 09:05:42] OPENAI PDF: 17380560
+[2026-05-14 09:05:42] LARGE FILE: False
+[2026-05-14 09:05:42] FILE HASH: 19e59845516a51e9a02e2121c7b2881ce9873c8ac7a59002393ba83f0909e56d
+[2026-05-14 09:05:42] CACHE HIT
+[2026-05-14 09:05:42] OPENAI FILE DECISION: block

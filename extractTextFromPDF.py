@@ -44,7 +44,7 @@ def ocr_image(args):
     return page_num, text.strip()
 
 # Main extraction pipeline
-def extract_text_hybrid(input_path, dpi=200, lang='eng', use_parallel=True):
+def extract_text_hybrid(input_path, dpi=200, lang='eng', use_parallel=True, max_pages=12):
     # Ensure languages exist
     for l in lang.split('+'):
         download_tesseract_lang_data(l)
@@ -67,6 +67,7 @@ def extract_text_hybrid(input_path, dpi=200, lang='eng', use_parallel=True):
     total_pages = len(input_pdf)
     results = [""] * total_pages
     pages_to_ocr = []
+    MAX_OCR_PAGES=max_pages
 
     # Try native extraction
     for page_num in range(total_pages):
@@ -78,31 +79,72 @@ def extract_text_hybrid(input_path, dpi=200, lang='eng', use_parallel=True):
         else:
             pages_to_ocr.append(page_num)
 
-    # OCR only required pages for scanned pdf
+    # OCR required pages for scanned PDFs
+
     if pages_to_ocr:
+
         print(f"OCR needed for {len(pages_to_ocr)} / {total_pages} pages")
 
-        try:
-            images = convert_from_path(
-                input_path,
-                dpi=dpi,
-                first_page=min(pages_to_ocr) + 1,
-                last_page=max(pages_to_ocr) + 1
+        # Limit OCR workload
+        if len(pages_to_ocr) > MAX_OCR_PAGES:
+
+            important_pages = set()
+
+            # First pages
+            important_pages.update(
+                pages_to_ocr[:3]
             )
 
-            # Map images correctly
-            page_image_map = dict(zip(pages_to_ocr, images))
-            ocr_tasks = [(p, page_image_map[p], lang) for p in pages_to_ocr]
+            # Last pages
+            important_pages.update(
+                pages_to_ocr[-3:]
+            )
 
-            if use_parallel:
-                with Pool(cpu_count()) as pool:
-                    ocr_results = pool.map(ocr_image, ocr_tasks)
-            else:
-                ocr_results = [ocr_image(task) for task in ocr_tasks]
+            # Middle pages
+            middle = pages_to_ocr[3:-3]
+
+            important_pages.update(
+                middle[:MAX_OCR_PAGES - 6]
+            )
+
+            pages_to_ocr = sorted(
+                list(important_pages)
+            )
+
+        try:
+
+            ocr_results = []
+
+            # Render ONLY required pages
+            for p in pages_to_ocr:
+
+                images = convert_from_path(
+                    input_path,
+                    dpi=dpi,
+                    first_page=p + 1,
+                    last_page=p + 1
+                )
+
+                if not images:
+                    continue
+
+                image = images[0]
+
+                if use_parallel:
+                    ocr_results.append(
+                        ocr_image((p, image, lang))
+                    )
+                else:
+                    ocr_results.append(
+                        ocr_image((p, image, lang))
+                    )
 
             for page_num, text in ocr_results:
+
                 results[page_num] = text
+
         except Exception as e:
+
             print(f"OCR error: {e}")
 
     input_pdf.close()
@@ -113,6 +155,11 @@ def detect_pii(text):
     results = analyzer.analyze(
         text=text,
         language="en",
+         entities=[
+        "CREDIT_CARD",
+        "IBAN_CODE",
+        "CRYPTO",
+    ],
         score_threshold=0.6
     )
     return results
